@@ -1,5 +1,6 @@
 const HISTORY_KEY = "rastreadorHtml.history";
 const CURRENT_CAPTURE_KEY = "rastreadorHtml.currentCaptureId";
+const TRACKING_TARGET_KEY = "rastreadorHtml.trackingTarget";
 const MAX_HISTORY_ITEMS = 100;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -21,7 +22,11 @@ async function handleMessage(message, sender) {
   }
 
   if (message.type === "rastreador:startTracking") {
-    return startTracking();
+    return startTracking(message);
+  }
+
+  if (message.type === "rastreador:getTrackingStatus") {
+    return getTrackingStatus();
   }
 
   if (message.type === "rastreador:captureElement") {
@@ -32,6 +37,14 @@ async function handleMessage(message, sender) {
     return getHistoryResponse();
   }
 
+  if (message.type === "rastreador:stopTracking") {
+    return stopTracking();
+  }
+
+  if (message.type === "rastreador:trackingStoppedByPage") {
+    return clearTrackingTargetFromSender(sender);
+  }
+
   if (message.type === "rastreador:clearHistory") {
     return clearHistory();
   }
@@ -39,7 +52,16 @@ async function handleMessage(message, sender) {
   return { ok: false, error: "Tipo de mensagem desconhecido." };
 }
 
-async function startTracking() {
+async function startTracking(options = {}) {
+  const activeTarget = await getValidTrackingTarget();
+
+  if (activeTarget) {
+    return {
+      ok: false,
+      error: "O modo rastreio ja esta ativo. Interrompa o rastreamento antes de iniciar outro."
+    };
+  }
+
   const [tab] = await chrome.tabs.query({
     active: true,
     currentWindow: true
@@ -55,7 +77,11 @@ async function startTracking() {
     return { ok: false, error: limitation };
   }
 
-  const panelResult = await openResultPanel(tab);
+  await closeResultTabs();
+
+  const panelResult = options.skipPanelOpen
+    ? { ok: true }
+    : await openResultPanel(tab);
 
   try {
     await chrome.scripting.insertCSS({
@@ -82,6 +108,19 @@ async function startTracking() {
       }
     });
 
+    await chrome.storage.session.set({
+      [TRACKING_TARGET_KEY]: {
+        tabId: tab.id,
+        windowId: tab.windowId,
+        url: tab.url || "",
+        startedAt: new Date().toISOString()
+      }
+    });
+
+    await notifyResultPage({
+      type: "rastreador:trackingStarted"
+    });
+
     return {
       ok: true,
       tabId: tab.id,
@@ -97,10 +136,22 @@ async function startTracking() {
   }
 }
 
+async function getTrackingStatus() {
+  const target = await getValidTrackingTarget();
+
+  return {
+    ok: true,
+    isTracking: Boolean(target),
+    target: target || null
+  };
+}
+
 async function saveCapture(capture, sender) {
   if (!capture || typeof capture !== "object") {
     return { ok: false, error: "Captura vazia ou invalida." };
   }
+
+  await closeResultTabs();
 
   const enrichedCapture = enrichCapture(capture, sender);
   const historyData = await chrome.storage.session.get(HISTORY_KEY);
@@ -155,6 +206,87 @@ async function clearHistory() {
   });
 
   return { ok: true };
+}
+
+async function stopTracking() {
+  const target = await getValidTrackingTarget();
+
+  if (!target || typeof target.tabId !== "number") {
+    return {
+      ok: false,
+      error: "Nenhuma aba em modo de rastreio foi encontrada nesta sessao."
+    };
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: target.tabId, allFrames: true },
+      func: () => {
+        window.__RastreadorHtmlTracker?.deactivate?.({
+          notifyBackground: false
+        });
+      }
+    });
+
+    await chrome.storage.session.remove(TRACKING_TARGET_KEY);
+    await notifyResultPage({
+      type: "rastreador:trackingStopped"
+    });
+
+    return { ok: true };
+  } catch (error) {
+    await chrome.storage.session.remove(TRACKING_TARGET_KEY);
+
+    return {
+      ok: false,
+      error: `Nao foi possivel parar o rastreio automaticamente: ${error?.message || error}`
+    };
+  }
+}
+
+async function clearTrackingTargetFromSender(sender) {
+  const data = await chrome.storage.session.get(TRACKING_TARGET_KEY);
+  const target = data[TRACKING_TARGET_KEY];
+  const senderTabId = sender?.tab?.id;
+
+  if (!target || target.tabId === senderTabId) {
+    await chrome.storage.session.remove(TRACKING_TARGET_KEY);
+    await notifyResultPage({
+      type: "rastreador:trackingStopped"
+    });
+  }
+
+  return { ok: true };
+}
+
+async function getValidTrackingTarget() {
+  const data = await chrome.storage.session.get(TRACKING_TARGET_KEY);
+  const target = data[TRACKING_TARGET_KEY];
+
+  if (!target || typeof target.tabId !== "number") {
+    return null;
+  }
+
+  try {
+    await chrome.tabs.get(target.tabId);
+    return target;
+  } catch (error) {
+    await chrome.storage.session.remove(TRACKING_TARGET_KEY);
+    return null;
+  }
+}
+
+async function closeResultTabs() {
+  const resultUrl = chrome.runtime.getURL("resultado.html");
+  const tabs = await chrome.tabs.query({});
+  const resultTabIds = tabs
+    .filter((tab) => tab.url === resultUrl || /^chrome-extension:\/\/[^/]+\/resultado\.html(?:[?#].*)?$/.test(tab.url || ""))
+    .map((tab) => tab.id)
+    .filter((tabId) => typeof tabId === "number");
+
+  if (resultTabIds.length > 0) {
+    await chrome.tabs.remove(resultTabIds);
+  }
 }
 
 function enrichCapture(capture, sender) {

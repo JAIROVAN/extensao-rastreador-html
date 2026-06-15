@@ -1,7 +1,8 @@
 const appState = {
   history: [],
   currentCaptureId: null,
-  currentCapture: null
+  currentCapture: null,
+  activeSection: "summary"
 };
 
 const refs = {};
@@ -11,6 +12,7 @@ let pendingPreferredCaptureId = null;
 document.addEventListener("DOMContentLoaded", () => {
   refs.captureMeta = document.getElementById("captureMeta");
   refs.statusMessage = document.getElementById("statusMessage");
+  refs.captureSelect = document.getElementById("captureSelect");
   refs.summary = document.getElementById("summary");
   refs.idAnalysis = document.getElementById("idAnalysis");
   refs.recommendedSelectors = document.getElementById("recommendedSelectors");
@@ -24,9 +26,14 @@ document.addEventListener("DOMContentLoaded", () => {
   refs.childrenInfo = document.getElementById("childrenInfo");
   refs.historyList = document.getElementById("historyList");
   refs.jsonOutput = document.getElementById("jsonOutput");
+  refs.sectionMenu = document.querySelector(".section-menu");
+  refs.reportSections = Array.from(document.querySelectorAll("[data-section]"));
 
   document.querySelector(".toolbar").addEventListener("click", handleToolbarClick);
+  refs.sectionMenu.addEventListener("click", handleSectionMenuClick);
+  refs.captureSelect.addEventListener("change", handleCaptureSelectChange);
   refs.historyList.addEventListener("click", handleHistoryClick);
+  setActiveSection(appState.activeSection);
 
   initialized = true;
   loadAndRender(pendingPreferredCaptureId);
@@ -34,6 +41,10 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type === "rastreador:trackingStopped" && initialized) {
+    setStatus("Modo de rastreio parado.");
+  }
+
   if (message?.type === "rastreador:historyUpdated" || message?.type === "rastreador:historyCleared") {
     if (!initialized) {
       pendingPreferredCaptureId = message.captureId || null;
@@ -64,10 +75,18 @@ async function loadAndRender(preferredCaptureId = null) {
 }
 
 function getCurrentCapture() {
-  const item = appState.history.find((historyItem) => historyItem.captureId === appState.currentCaptureId) ||
-    appState.history[0];
+  const item = getCurrentHistoryItem();
 
   return item?.fullData || null;
+}
+
+function getCurrentHistoryItem() {
+  const item = appState.history.find((historyItem) => historyItem.captureId === appState.currentCaptureId) ||
+    appState.history[0] ||
+    null;
+
+  appState.currentCaptureId = item?.captureId || null;
+  return item;
 }
 
 function render() {
@@ -82,6 +101,7 @@ function render() {
 
   const element = capture.elementInfo || {};
   refs.captureMeta.textContent = `${element.tagName || "elemento"} capturado em ${formatDate(capture.capturedAt)} - ${capture.pageInfo?.url || ""}`;
+  renderCaptureSelect();
   renderSummary(capture);
   renderIdAnalysis(capture.idAnalysis);
   renderRecommendedSelectors(capture.recommendedSelectors || []);
@@ -95,6 +115,7 @@ function render() {
   renderChildren(capture.directChildren || []);
   renderHistory();
   refs.jsonOutput.textContent = JSON.stringify(capture, null, 2);
+  syncActiveSection();
 }
 
 function renderEmpty() {
@@ -109,8 +130,10 @@ function renderEmpty() {
   setEmpty(refs.attributesInfo, "Nenhum atributo capturado.");
   setEmpty(refs.ancestorsInfo, "Nenhum ancestral capturado.");
   setEmpty(refs.childrenInfo, "Nenhum filho direto capturado.");
+  renderCaptureSelect();
   renderHistory();
   refs.jsonOutput.textContent = "";
+  syncActiveSection();
 }
 
 function renderSummary(capture) {
@@ -374,6 +397,46 @@ function renderHistory() {
   });
 }
 
+function renderCaptureSelect() {
+  clear(refs.captureSelect);
+
+  if (!appState.history.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Nenhuma captura";
+    refs.captureSelect.appendChild(option);
+    refs.captureSelect.disabled = true;
+    return;
+  }
+
+  refs.captureSelect.disabled = false;
+
+  getHistoryInCaptureOrder().forEach((item, index) => {
+    const option = document.createElement("option");
+    option.value = item.captureId;
+    option.textContent = buildCaptureOptionLabel(item, index);
+    refs.captureSelect.appendChild(option);
+  });
+
+  refs.captureSelect.value = appState.currentCaptureId || appState.history[0]?.captureId || "";
+}
+
+function getHistoryInCaptureOrder() {
+  return [...appState.history].sort((a, b) => {
+    const firstDate = new Date(a.capturedAt || 0).getTime();
+    const secondDate = new Date(b.capturedAt || 0).getTime();
+    return firstDate - secondDate;
+  });
+}
+
+function buildCaptureOptionLabel(item, index) {
+  const summary = item.elementSummary || {};
+  const tag = summary.tagName || "elemento";
+  const name = summary.labelText || summary.id || item.bestSelector || summary.textPreview || "sem identificador";
+  const time = formatDate(item.capturedAt);
+  return `${index + 1}. ${tag} - ${name}${time ? ` - ${time}` : ""}`;
+}
+
 function renderKeyValueGrid(container, pairs) {
   clear(container);
   container.classList.add("kv-grid");
@@ -488,6 +551,11 @@ function handleToolbarClick(event) {
     return;
   }
 
+  if (action === "stop-tracking") {
+    stopTracking();
+    return;
+  }
+
   if (!capture) {
     setStatus("Nenhuma captura selecionada.");
     return;
@@ -510,6 +578,20 @@ function handleToolbarClick(event) {
   copyText(payloads[action] || "", "Conteudo copiado.");
 }
 
+function handleSectionMenuClick(event) {
+  const button = event.target.closest("button[data-section-target]");
+
+  if (!button) {
+    return;
+  }
+
+  setActiveSection(button.dataset.sectionTarget);
+}
+
+function handleCaptureSelectChange(event) {
+  selectCaptureById(event.target.value);
+}
+
 function handleHistoryClick(event) {
   const button = event.target.closest("button[data-capture-id]");
 
@@ -517,9 +599,63 @@ function handleHistoryClick(event) {
     return;
   }
 
-  appState.currentCaptureId = button.dataset.captureId;
+  selectCaptureById(button.dataset.captureId);
+}
+
+function selectCaptureById(captureId) {
+  if (!captureId) {
+    return;
+  }
+
+  appState.currentCaptureId = captureId;
   appState.currentCapture = getCurrentCapture();
   render();
+}
+
+function setActiveSection(sectionName) {
+  appState.activeSection = sectionName || "summary";
+  syncActiveSection();
+}
+
+function syncActiveSection() {
+  if (!refs.reportSections || !refs.sectionMenu) {
+    return;
+  }
+
+  const sectionNames = refs.reportSections.map((section) => section.dataset.section);
+
+  if (!sectionNames.includes(appState.activeSection)) {
+    appState.activeSection = sectionNames[0] || "summary";
+  }
+
+  refs.reportSections.forEach((section) => {
+    const isActive = section.dataset.section === appState.activeSection;
+    section.hidden = !isActive;
+    section.classList.toggle("is-active", isActive);
+  });
+
+  refs.sectionMenu.querySelectorAll("button[data-section-target]").forEach((button) => {
+    const isActive = button.dataset.sectionTarget === appState.activeSection;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+}
+
+async function stopTracking() {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "rastreador:stopTracking"
+    });
+
+    if (!response?.ok) {
+      setStatus(response?.error || "Nao foi possivel parar o rastreio.");
+      return;
+    }
+
+    setStatus("Modo de rastreio parado.");
+  } catch (error) {
+    setStatus(error?.message || "Falha ao parar o rastreio.");
+  }
 }
 
 async function clearHistory() {
@@ -673,7 +809,9 @@ function updateButtons() {
   document.querySelectorAll(".toolbar button").forEach((button) => {
     const action = button.dataset.action;
 
-    if (action === "export-history" || action === "clear-history") {
+    if (action === "stop-tracking") {
+      button.disabled = false;
+    } else if (action === "export-history" || action === "clear-history") {
       button.disabled = !hasHistory;
     } else {
       button.disabled = !hasCapture;

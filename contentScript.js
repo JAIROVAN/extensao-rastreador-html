@@ -27,7 +27,9 @@
     }
 
     if (message?.type === "rastreador:deactivateTracking") {
-      deactivate();
+      deactivate({
+        notifyBackground: false
+      });
     }
   });
 
@@ -48,7 +50,7 @@
     window.addEventListener("keydown", handleKeyDown, true);
   }
 
-  function deactivate() {
+  function deactivate(options = {}) {
     if (!state.active) {
       return;
     }
@@ -64,6 +66,14 @@
     document.removeEventListener("pointerup", blockPointerEvent, true);
     window.removeEventListener("keydown", handleKeyDown, true);
     hideVisualNodes();
+
+    if (options.notifyBackground !== false) {
+      chrome.runtime.sendMessage({
+        type: "rastreador:trackingStoppedByPage"
+      }, () => {
+        // A mensagem e apenas para sincronizar o estado do popup/background.
+      });
+    }
   }
 
   function ensureVisualNodes() {

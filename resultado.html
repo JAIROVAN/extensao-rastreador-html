@@ -8,12 +8,14 @@
 </head>
 <body>
   <header class="app-header">
-    <div>
+    <div class="header-summary">
       <p class="eyebrow">Painel lateral</p>
       <h1>Rastreador HTML</h1>
       <p id="captureMeta" class="capture-meta">Nenhuma captura nesta sessão.</p>
     </div>
-    <div class="toolbar" aria-label="Ações do relatório">
+    <details class="header-actions">
+      <summary>Ações</summary>
+      <div class="toolbar" aria-label="Ações do relatório">
       <button type="button" data-action="copy-json">Copiar JSON</button>
       <button type="button" data-action="copy-best">Copiar melhor seletor</button>
       <button type="button" data-action="copy-recommended">Copiar seletores recomendados</button>
@@ -25,75 +27,100 @@
       <button type="button" data-action="copy-click">Copiar Puppeteer clique</button>
       <button type="button" data-action="copy-fill">Copiar Puppeteer preenchimento</button>
       <button type="button" data-action="copy-read">Copiar Puppeteer texto</button>
+      <button type="button" data-action="stop-tracking" class="stop">Parar rastreio</button>
       <button type="button" data-action="export-history">Exportar histórico JSON</button>
       <button type="button" data-action="clear-history" class="danger">Limpar histórico</button>
-    </div>
+      </div>
+    </details>
   </header>
 
   <main>
     <p id="statusMessage" class="status-message" role="status" aria-live="polite"></p>
 
-    <section class="report-section">
+    <div class="capture-picker">
+      <label for="captureSelect">Capturas</label>
+      <select id="captureSelect">
+        <option value="">Nenhuma captura</option>
+      </select>
+    </div>
+
+    <nav class="section-menu" aria-label="Seções do relatório">
+      <button type="button" data-section-target="summary">Resumo</button>
+      <button type="button" data-section-target="id">ID</button>
+      <button type="button" data-section-target="selectors">Seletores</button>
+      <button type="button" data-section-target="console">Console</button>
+      <button type="button" data-section-target="puppeteer">Puppeteer</button>
+      <button type="button" data-section-target="iframe">Iframe</button>
+      <button type="button" data-section-target="labels">Labels</button>
+      <button type="button" data-section-target="visibility">Visibilidade</button>
+      <button type="button" data-section-target="attributes">Atributos</button>
+      <button type="button" data-section-target="ancestors">Pais</button>
+      <button type="button" data-section-target="children">Filhos</button>
+      <button type="button" data-section-target="history">Histórico</button>
+      <button type="button" data-section-target="json">JSON</button>
+    </nav>
+
+    <section class="report-section" data-section="summary">
       <h2>Resumo da captura atual</h2>
       <div id="summary" class="kv-grid"></div>
     </section>
 
-    <section class="report-section">
+    <section class="report-section" data-section="id">
       <h2>Diagnóstico do ID</h2>
       <div id="idAnalysis"></div>
     </section>
 
-    <section class="report-section">
+    <section class="report-section" data-section="selectors">
       <h2>Seletores recomendados</h2>
       <div id="recommendedSelectors" class="selector-list"></div>
     </section>
 
-    <section class="report-section">
+    <section class="report-section" data-section="console">
       <h2>Código para testar no console</h2>
       <div id="consoleCode" class="code-grid"></div>
     </section>
 
-    <section class="report-section">
+    <section class="report-section" data-section="puppeteer">
       <h2>Código Puppeteer sugerido</h2>
       <div id="puppeteerCode" class="code-grid"></div>
     </section>
 
-    <section class="report-section">
+    <section class="report-section" data-section="iframe">
       <h2>Informações de iframe</h2>
       <div id="iframeInfo"></div>
     </section>
 
-    <section class="report-section">
+    <section class="report-section" data-section="labels">
       <h2>Labels relacionados</h2>
       <div id="labelInfo"></div>
     </section>
 
-    <section class="report-section">
+    <section class="report-section" data-section="visibility">
       <h2>Visibilidade do elemento</h2>
       <div id="visibilityInfo" class="kv-grid"></div>
     </section>
 
-    <section class="report-section">
+    <section class="report-section" data-section="attributes">
       <h2>Atributos do elemento</h2>
       <div id="attributesInfo"></div>
     </section>
 
-    <section class="report-section">
+    <section class="report-section" data-section="ancestors">
       <h2>Pais e ascendentes</h2>
       <div id="ancestorsInfo"></div>
     </section>
 
-    <section class="report-section">
+    <section class="report-section" data-section="children">
       <h2>Filhos diretos</h2>
       <div id="childrenInfo"></div>
     </section>
 
-    <section class="report-section">
+    <section class="report-section" data-section="history">
       <h2>Histórico da sessão</h2>
       <div id="historyList" class="history-list"></div>
     </section>
 
-    <section class="report-section">
+    <section class="report-section" data-section="json">
       <h2>JSON completo da captura atual</h2>
       <pre id="jsonOutput" class="json-output"></pre>
     </section>
