@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rastreador HTML</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      padding: 12px;
+      width: 180px;
+      background: #f7f9fc;
+    }
+
+    button {
+      width: 100%;
+      min-height: 44px;
+      border: 0;
+      border-radius: 6px;
+      background: #155eef;
+      color: #ffffff;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    button:hover {
+      background: #0f49c9;
+    }
+
+    button:focus-visible {
+      outline: 3px solid #9cc2ff;
+      outline-offset: 2px;
+    }
+
+    button:disabled {
+      background: #8ca2c5;
+      cursor: wait;
+    }
+  </style>
+</head>
+<body>
+  <button id="trackButton" type="button">RASTREAR</button>
+  <script src="popup.js"></script>
+</body>
+</html>
