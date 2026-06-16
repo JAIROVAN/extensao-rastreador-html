@@ -14,6 +14,8 @@ document.addEventListener("DOMContentLoaded", () => {
   refs.statusMessage = document.getElementById("statusMessage");
   refs.captureSelect = document.getElementById("captureSelect");
   refs.summary = document.getElementById("summary");
+  refs.aiCompactSummaryOutput = document.getElementById("aiCompactSummaryOutput");
+  refs.aiSummaryOutput = document.getElementById("aiSummaryOutput");
   refs.idAnalysis = document.getElementById("idAnalysis");
   refs.recommendedSelectors = document.getElementById("recommendedSelectors");
   refs.consoleCode = document.getElementById("consoleCode");
@@ -27,10 +29,12 @@ document.addEventListener("DOMContentLoaded", () => {
   refs.historyList = document.getElementById("historyList");
   refs.jsonOutput = document.getElementById("jsonOutput");
   refs.sectionMenu = document.querySelector(".section-menu");
+  refs.aiSummaryActions = document.querySelector(".ai-summary-actions");
   refs.reportSections = Array.from(document.querySelectorAll("[data-section]"));
 
   document.querySelector(".toolbar").addEventListener("click", handleToolbarClick);
   refs.sectionMenu.addEventListener("click", handleSectionMenuClick);
+  refs.aiSummaryActions.addEventListener("click", handleAiSummaryCopyClick);
   refs.captureSelect.addEventListener("change", handleCaptureSelectChange);
   refs.historyList.addEventListener("click", handleHistoryClick);
   setActiveSection(appState.activeSection);
@@ -103,6 +107,7 @@ function render() {
   refs.captureMeta.textContent = `${element.tagName || "elemento"} capturado em ${formatDate(capture.capturedAt)} - ${capture.pageInfo?.url || ""}`;
   renderCaptureSelect();
   renderSummary(capture);
+  renderAgentSummary(capture);
   renderIdAnalysis(capture.idAnalysis);
   renderRecommendedSelectors(capture.recommendedSelectors || []);
   renderConsoleCode(capture);
@@ -120,6 +125,8 @@ function render() {
 
 function renderEmpty() {
   setEmpty(refs.summary, "Nenhuma captura disponivel.");
+  refs.aiCompactSummaryOutput.textContent = "";
+  refs.aiSummaryOutput.textContent = "";
   setEmpty(refs.idAnalysis, "Nenhum diagnostico disponivel.");
   setEmpty(refs.recommendedSelectors, "Nenhum seletor recomendado.");
   setEmpty(refs.consoleCode, "Nenhum codigo de console disponivel.");
@@ -159,6 +166,11 @@ function renderSummary(capture) {
     ["textPreview", element.innerText || element.textContent],
     ["htmlSummary", capture.htmlSummary?.summary]
   ]);
+}
+
+function renderAgentSummary(capture) {
+  refs.aiCompactSummaryOutput.textContent = JSON.stringify(buildAgentSummaryCompact(capture), null, 2);
+  refs.aiSummaryOutput.textContent = JSON.stringify(buildAgentSummary(capture), null, 2);
 }
 
 function renderIdAnalysis(idAnalysis = {}) {
@@ -563,6 +575,8 @@ function handleToolbarClick(event) {
 
   const payloads = {
     "copy-json": JSON.stringify(capture, null, 2),
+    "copy-ai-summary": JSON.stringify(buildAgentSummary(capture), null, 2),
+    "copy-ai-summary-compact": JSON.stringify(buildAgentSummaryCompact(capture), null, 2),
     "copy-best": getBestSelector(capture),
     "copy-recommended": formatRecommendedSelectors(capture.recommendedSelectors || []),
     "copy-xpath": getXPathSelector(capture),
@@ -586,6 +600,28 @@ function handleSectionMenuClick(event) {
   }
 
   setActiveSection(button.dataset.sectionTarget);
+}
+
+function handleAiSummaryCopyClick(event) {
+  const button = event.target.closest("button[data-ai-summary-copy]");
+
+  if (!button) {
+    return;
+  }
+
+  const capture = appState.currentCapture;
+
+  if (!capture) {
+    setStatus("Nenhuma captura selecionada.");
+    return;
+  }
+
+  const summary = button.dataset.aiSummaryCopy === "compact"
+    ? buildAgentSummaryCompact(capture)
+    : buildAgentSummary(capture);
+  const label = button.dataset.aiSummaryCopy === "compact" ? "Resumo compacto copiado." : "Resumo completo copiado.";
+
+  copyText(JSON.stringify(summary, null, 2), label);
 }
 
 function handleCaptureSelectChange(event) {
@@ -727,6 +763,358 @@ async function copyText(text, successMessage) {
   setStatus(successMessage);
 }
 
+function buildAgentSummaryCompact(capture) {
+  const element = capture.elementInfo || {};
+  const visibility = capture.visibilityInfo || {};
+  const iframeInfo = capture.iframeInfo || {};
+  const idAnalysis = capture.idAnalysis || {};
+  const labelInfo = capture.labelInfo || {};
+  const puppeteer = capture.puppeteerSuggestions || {};
+  const capabilities = buildAutomationCapabilities(element, visibility);
+  const best = capture.recommendedSelectors?.[0] || null;
+  const preferredSnippet = pickPreferredPuppeteerSnippet(puppeteer, capabilities, iframeInfo);
+
+  return pruneEmpty({
+    schema: "rastreadorHtml.aiAutomationCompact.v1",
+    page: {
+      url: capture.pageInfo?.url || "",
+      title: capture.pageInfo?.title || ""
+    },
+    element: {
+      kind: element.elementKind || "unknown",
+      tag: element.tagName || "",
+      id: element.id || "",
+      idStatus: idAnalysis.status || "",
+      classes: limitArray(element.classList || [], 5),
+      name: element.name || "",
+      type: element.type || "",
+      role: element.role || "",
+      label: labelInfo.labelText || element.ariaLabel || element.title || element.placeholder || "",
+      text: limitText(element.innerText || element.textContent || "", 100),
+      state: {
+        visible: Boolean(visibility.isVisible),
+        inViewport: Boolean(visibility.isInViewport),
+        disabled: Boolean(element.disabled || visibility.disabled),
+        readOnly: Boolean(element.readOnly || visibility.readOnly)
+      }
+    },
+    action: {
+      preferred: capabilities.preferredOperation,
+      canClick: capabilities.canClick,
+      canFill: capabilities.canFill,
+      canSelect: capabilities.canSelect,
+      canReadText: capabilities.canReadText
+    },
+    selectors: {
+      best: best ? compactSelectorRecommendation(best) : { selector: getBestSelector(capture) },
+      css: getCssSelector(capture),
+      xpath: getXPathSelector(capture),
+      alternatives: limitArray(capture.recommendedSelectors || [], 3).map((item) => ({
+        selector: item.selector || "",
+        type: item.type || "",
+        stability: item.stability || "",
+        warning: item.warning || ""
+      }))
+    },
+    iframe: iframeInfo.isInsideIframe
+      ? {
+          insideIframe: true,
+          nestingLevel: Array.isArray(iframeInfo.iframePath) ? iframeInfo.iframePath.length : 0,
+          path: simplifyIframePathCompact(iframeInfo.iframePath || [])
+        }
+      : { insideIframe: false },
+    puppeteer: {
+      preferredSnippet
+    },
+    warnings: limitArray(buildAgentWarnings(capture), 5)
+  });
+}
+
+function buildAgentSummary(capture) {
+  const element = capture.elementInfo || {};
+  const selectors = capture.selectors || {};
+  const labelInfo = capture.labelInfo || {};
+  const visibility = capture.visibilityInfo || {};
+  const iframeInfo = capture.iframeInfo || {};
+  const idAnalysis = capture.idAnalysis || {};
+  const puppeteer = capture.puppeteerSuggestions || {};
+  const consoleSuggestions = buildConsoleSuggestions(capture);
+  const cssSelector = getCssSelector(capture);
+  const xpathSelector = getXPathSelector(capture);
+  const bestRecommendedSelector = capture.recommendedSelectors?.[0] || null;
+  const stableAttributes = pickAutomationAttributes(element.attributes || {});
+  const capabilities = buildAutomationCapabilities(element, visibility);
+
+  return pruneEmpty({
+    schema: "rastreadorHtml.aiAutomationSummary.v1",
+    captureId: capture.captureId,
+    capturedAt: capture.capturedAt,
+    objective: "Use este resumo para criar automacao Puppeteer para clicar, ler texto ou preencher este elemento.",
+    page: {
+      url: capture.pageInfo?.url || "",
+      domain: capture.pageInfo?.domain || "",
+      title: capture.pageInfo?.title || "",
+      tabId: capture.pageInfo?.tabId ?? null,
+      frameId: capture.pageInfo?.frameId ?? null,
+      frameUrl: capture.pageInfo?.frameUrl || ""
+    },
+    element: {
+      tagName: element.tagName || "",
+      elementKind: element.elementKind || "unknown",
+      nodeName: element.nodeName || "",
+      id: element.id || "",
+      idStatus: idAnalysis.status || "",
+      idStabilityScore: idAnalysis.score ?? null,
+      classList: limitArray(element.classList || [], 12),
+      className: element.className || "",
+      name: element.name || "",
+      type: element.type || "",
+      role: element.role || "",
+      title: element.title || "",
+      ariaLabel: element.ariaLabel || "",
+      placeholder: element.placeholder || "",
+      labelText: labelInfo.labelText || "",
+      labelStrategy: labelInfo.strategy || "",
+      textPreview: limitText(element.innerText || element.textContent || "", 180),
+      htmlSummary: capture.htmlSummary?.openingTag || capture.htmlSummary?.summary || "",
+      stableAttributes,
+      state: {
+        disabled: Boolean(element.disabled || visibility.disabled),
+        readOnly: Boolean(element.readOnly || visibility.readOnly),
+        checked: Boolean(element.checked),
+        selected: Boolean(element.selected),
+        isVisible: Boolean(visibility.isVisible),
+        isInViewport: Boolean(visibility.isInViewport),
+        isFocusable: Boolean(visibility.isFocusable)
+      },
+      shadowDom: element.isInsideShadowDom
+        ? {
+            isInsideShadowDom: true,
+            mode: element.shadowRootMode || ""
+          }
+        : null
+    },
+    automationCapabilities: capabilities,
+    selectors: {
+      best: bestRecommendedSelector
+        ? compactSelectorRecommendation(bestRecommendedSelector)
+        : {
+            selector: getBestSelector(capture),
+            type: "css",
+            warning: ""
+          },
+      css: cssSelector,
+      xpath: xpathSelector,
+      recommended: limitArray(capture.recommendedSelectors || [], 6).map(compactSelectorRecommendation),
+      stableAttributeSelectors: limitArray(selectors.selectorsByStableAttributes || [], 8),
+      labelSelectors: limitArray(selectors.selectorsByLabel || [], 6),
+      parentContextSelectors: limitArray(selectors.selectorsByParentContext || [], 5),
+      nearbyTextSelectors: limitArray(selectors.selectorsByNearbyText || [], 4),
+      puppeteerCompatibleSelectors: limitArray(selectors.selectorsForPuppeteer || [], 8),
+      fallbackSelectors: {
+        cssFullPath: selectors.cssFullPath || "",
+        xpathFull: selectors.xpathFull || "",
+        warning: "Use fallback apenas se seletores estaveis falharem; caminhos absolutos podem quebrar com mudancas no DOM."
+      }
+    },
+    iframe: {
+      isInsideIframe: Boolean(iframeInfo.isInsideIframe),
+      nestingLevel: Array.isArray(iframeInfo.iframePath) ? iframeInfo.iframePath.length : 0,
+      pathFromTopToTargetFrame: simplifyIframePath(iframeInfo.iframePath || []),
+      warnings: iframeInfo.iframeWarnings || []
+    },
+    puppeteerSnippets: pruneEmpty({
+      click: puppeteer.click || "",
+      fill: capabilities.canFill || capabilities.canSelect ? puppeteer.fill || "" : "",
+      readText: puppeteer.readText || "",
+      iframe: puppeteer.iframe || ""
+    }),
+    consoleValidation: pruneEmpty({
+      querySelector: consoleSuggestions.querySelector,
+      querySelectorAll: consoleSuggestions.querySelectorAll,
+      xpath: consoleSuggestions.xpath
+    }),
+    warnings: buildAgentWarnings(capture)
+  });
+}
+
+function buildAutomationCapabilities(element, visibility) {
+  const kind = element.elementKind || "unknown";
+  const disabled = Boolean(element.disabled || visibility.disabled);
+  const readOnly = Boolean(element.readOnly || visibility.readOnly);
+  const canFill = (kind === "input" || kind === "textarea") && !disabled && !readOnly;
+  const canSelect = kind === "select" && !disabled;
+  const canClick = !disabled && visibility.pointerEvents !== "none";
+  const canReadText = true;
+  const recommendedActions = [];
+
+  if (canClick) {
+    recommendedActions.push("click");
+  }
+
+  if (canFill) {
+    recommendedActions.push("fillText");
+  }
+
+  if (canSelect) {
+    recommendedActions.push("selectOption");
+  }
+
+  if (canReadText) {
+    recommendedActions.push("readText");
+  }
+
+  return {
+    canClick,
+    canFill,
+    canSelect,
+    canReadText,
+    preferredOperation: canFill ? "fillText" : canSelect ? "selectOption" : canClick ? "click" : "readText",
+    recommendedActions
+  };
+}
+
+function buildAgentWarnings(capture) {
+  const warnings = [];
+  const element = capture.elementInfo || {};
+  const visibility = capture.visibilityInfo || {};
+  const idAnalysis = capture.idAnalysis || {};
+  const iframeInfo = capture.iframeInfo || {};
+
+  if (!capture.recommendedSelectors?.length) {
+    warnings.push("Nenhum seletor recomendado foi gerado; valide manualmente no console antes de automatizar.");
+  }
+
+  if (idAnalysis.status === "possivelmenteDinamico") {
+    warnings.push("ID parece dinamico; evite usar seletor por id como principal.");
+  }
+
+  (idAnalysis.warnings || []).forEach((warning) => warnings.push(warning));
+
+  (capture.recommendedSelectors || [])
+    .slice(0, 4)
+    .forEach((selector) => {
+      if (selector.warning) {
+        warnings.push(selector.warning);
+      }
+    });
+
+  if (iframeInfo.isInsideIframe) {
+    warnings.push("Elemento esta dentro de iframe; a automacao deve localizar o frame antes do seletor do elemento.");
+  }
+
+  (iframeInfo.iframeWarnings || []).forEach((warning) => warnings.push(warning));
+
+  if (element.isInsideShadowDom) {
+    warnings.push("Elemento esta em shadow DOM; Puppeteer pode exigir estrategia especifica de piercing selector ou avaliacao no shadowRoot.");
+  }
+
+  if (!visibility.isVisible) {
+    warnings.push("Elemento nao esta visivel segundo computed style/rect; pode exigir scroll, espera ou outro estado da pagina.");
+  }
+
+  if (!visibility.isInViewport) {
+    warnings.push("Elemento esta fora do viewport; use scrollIntoView ou espere o layout antes de interagir.");
+  }
+
+  if (visibility.disabled || element.disabled) {
+    warnings.push("Elemento esta disabled; clique/preenchimento pode falhar ate ele ser habilitado.");
+  }
+
+  if (visibility.readOnly || element.readOnly) {
+    warnings.push("Elemento esta readonly; preenchimento direto pode falhar.");
+  }
+
+  if (visibility.overlapWarning) {
+    warnings.push(visibility.overlapWarning);
+  }
+
+  return limitArray(uniqueStrings(warnings), 12);
+}
+
+function pickAutomationAttributes(attributes) {
+  const usefulNames = new Set([
+    "id",
+    "name",
+    "type",
+    "role",
+    "title",
+    "aria-label",
+    "aria-labelledby",
+    "placeholder",
+    "alt",
+    "href",
+    "src",
+    "for",
+    "value"
+  ]);
+  const picked = {};
+
+  Object.entries(attributes || {}).forEach(([name, value]) => {
+    if (usefulNames.has(name) || name.startsWith("data-")) {
+      picked[name] = limitText(value, 160);
+    }
+  });
+
+  if (picked.value) {
+    picked.value = "[omitido: valor do campo nao e necessario para criar automacao]";
+  }
+
+  return picked;
+}
+
+function compactSelectorRecommendation(item) {
+  return {
+    selector: item.selector || "",
+    type: item.type || "",
+    score: item.score ?? null,
+    stability: item.stability || "",
+    reason: item.reason || "",
+    warning: item.warning || ""
+  };
+}
+
+function simplifyIframePath(path) {
+  return limitArray(path || [], 8).map((frame, index) => ({
+    level: index + 1,
+    frameIndex: frame.frameIndex,
+    frameId: frame.frameId || "",
+    frameName: frame.frameName || "",
+    frameTitle: frame.frameTitle || "",
+    frameSrc: limitText(frame.frameSrc || "", 180),
+    frameSelector: frame.frameSelector || "",
+    frameCssPath: frame.frameCssPath || "",
+    frameXPath: frame.frameXPath || "",
+    accessibilityStatus: frame.accessibilityStatus || ""
+  }));
+}
+
+function simplifyIframePathCompact(path) {
+  return limitArray(path || [], 5).map((frame, index) => ({
+    level: index + 1,
+    frameName: frame.frameName || "",
+    frameId: frame.frameId || "",
+    frameSelector: frame.frameSelector || "",
+    frameSrc: limitText(frame.frameSrc || "", 100)
+  }));
+}
+
+function pickPreferredPuppeteerSnippet(puppeteer, capabilities, iframeInfo) {
+  if (iframeInfo?.isInsideIframe && puppeteer.iframe) {
+    return puppeteer.iframe;
+  }
+
+  if ((capabilities.canFill || capabilities.canSelect) && puppeteer.fill) {
+    return puppeteer.fill;
+  }
+
+  if (capabilities.canClick && puppeteer.click) {
+    return puppeteer.click;
+  }
+
+  return puppeteer.readText || "";
+}
+
 function getBestSelector(capture) {
   return capture.recommendedSelectors?.[0]?.selector ||
     capture.selectors?.cssShort ||
@@ -846,6 +1234,56 @@ function clear(element) {
 
 function objectToPairs(object) {
   return Object.entries(object || {});
+}
+
+function limitArray(value, maxItems) {
+  return Array.isArray(value) ? value.slice(0, maxItems) : [];
+}
+
+function limitText(value, maxLength) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function uniqueStrings(values) {
+  return Array.from(new Set((values || []).filter(Boolean)));
+}
+
+function pruneEmpty(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map(pruneEmpty)
+      .filter((item) => item !== null && item !== undefined && item !== "");
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, item]) => [key, pruneEmpty(item)])
+      .filter(([, item]) => {
+        if (item === null || item === undefined || item === "") {
+          return false;
+        }
+
+        if (Array.isArray(item) && item.length === 0) {
+          return false;
+        }
+
+        if (typeof item === "object" && !Array.isArray(item) && Object.keys(item).length === 0) {
+          return false;
+        }
+
+        return true;
+      })
+  );
 }
 
 function stringifyValue(value) {

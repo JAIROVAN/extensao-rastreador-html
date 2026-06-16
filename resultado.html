@@ -17,6 +17,7 @@
       <summary>Ações</summary>
       <div class="toolbar" aria-label="Ações do relatório">
       <button type="button" data-action="copy-json">Copiar JSON</button>
+      <button type="button" data-action="copy-ai-summary">Copiar resumo completo IA</button>
       <button type="button" data-action="copy-best">Copiar melhor seletor</button>
       <button type="button" data-action="copy-recommended">Copiar seletores recomendados</button>
       <button type="button" data-action="copy-xpath">Copiar XPath</button>
@@ -46,6 +47,7 @@
 
     <nav class="section-menu" aria-label="Seções do relatório">
       <button type="button" data-section-target="summary">Resumo</button>
+      <button type="button" data-section-target="aiSummary">Resumo IA</button>
       <button type="button" data-section-target="id">ID</button>
       <button type="button" data-section-target="selectors">Seletores</button>
       <button type="button" data-section-target="console">Console</button>
@@ -63,6 +65,24 @@
     <section class="report-section" data-section="summary">
       <h2>Resumo da captura atual</h2>
       <div id="summary" class="kv-grid"></div>
+    </section>
+
+    <section class="report-section" data-section="aiSummary">
+      <h2>Resumo para agente IA</h2>
+      <div class="ai-summary-actions">
+        <button type="button" data-ai-summary-copy="complete">Copiar resumo completo</button>
+        <button type="button" data-ai-summary-copy="compact">Copiar resumo compacto</button>
+      </div>
+      <div class="ai-summary-grid">
+        <article class="code-block">
+          <h3>Resumo compacto</h3>
+          <pre id="aiCompactSummaryOutput" class="json-output"></pre>
+        </article>
+        <article class="code-block">
+          <h3>Resumo completo</h3>
+          <pre id="aiSummaryOutput" class="json-output"></pre>
+        </article>
+      </div>
     </section>
 
     <section class="report-section" data-section="id">

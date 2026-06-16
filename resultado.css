@@ -282,6 +282,24 @@ main {
   gap: 8px;
 }
 
+.ai-summary-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ai-summary-actions button {
+  border-color: #155eef;
+  background: #edf4ff;
+  color: #123f9f;
+}
+
+.ai-summary-grid {
+  display: grid;
+  gap: 10px;
+}
+
 .selector-item {
   padding: 10px;
 }
