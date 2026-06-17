@@ -109,7 +109,7 @@ function render() {
   renderSummary(capture);
   renderAgentSummary(capture);
   renderIdAnalysis(capture.idAnalysis);
-  renderRecommendedSelectors(capture.recommendedSelectors || []);
+  renderRecommendedSelectors(capture);
   renderConsoleCode(capture);
   renderPuppeteerCode(capture.puppeteerSuggestions || {});
   renderIframeInfo(capture.iframeInfo || {});
@@ -189,8 +189,9 @@ function renderIdAnalysis(idAnalysis = {}) {
   appendListBlock(refs.idAnalysis, "Warnings", idAnalysis.warnings || []);
 }
 
-function renderRecommendedSelectors(items) {
+function renderRecommendedSelectors(capture) {
   clear(refs.recommendedSelectors);
+  const items = capture?.recommendedSelectors || [];
 
   if (!items.length) {
     setEmpty(refs.recommendedSelectors, "Nenhum seletor recomendado.");
@@ -207,11 +208,25 @@ function renderRecommendedSelectors(items) {
     head.appendChild(createPill(item.type || "selector"));
     head.appendChild(createPill(`score ${item.score ?? ""}`));
     head.appendChild(createPill(item.stability || "", stabilityClass(item.stability)));
+    head.appendChild(createPill(selectorValidationLabel(item.validation), selectorValidationClass(item.validation)));
+    const testButton = document.createElement("button");
+    testButton.type = "button";
+    testButton.className = "selector-test-button";
+    testButton.textContent = "Copiar teste";
+    testButton.addEventListener("click", () => {
+      copyText(buildSelectorConsoleTestCode(capture, item), "Codigo de teste copiado.");
+    });
+    head.appendChild(testButton);
     wrapper.appendChild(head);
 
     const code = document.createElement("code");
     code.textContent = item.selector || "";
     wrapper.appendChild(code);
+
+    const validation = document.createElement("p");
+    validation.className = "selector-validation";
+    validation.textContent = selectorValidationDetail(item.validation);
+    wrapper.appendChild(validation);
 
     if (item.reason) {
       const reason = document.createElement("p");
@@ -229,6 +244,71 @@ function renderRecommendedSelectors(items) {
 
     refs.recommendedSelectors.appendChild(wrapper);
   });
+}
+
+function selectorValidationLabel(validation) {
+  if (!validation) {
+    return "nao testado";
+  }
+
+  if (!validation.tested) {
+    return "erro no teste";
+  }
+
+  if (validation.isUnique || validation.returnsSingleElement) {
+    return "unico";
+  }
+
+  const count = Number(validation.matchCount);
+
+  if (count === 0) {
+    return "0 matches";
+  }
+
+  if (Number.isFinite(count)) {
+    return `${count} matches`;
+  }
+
+  return "nao testado";
+}
+
+function selectorValidationClass(validation) {
+  if (!validation) {
+    return "not-tested";
+  }
+
+  if (!validation.tested) {
+    return "selector-error";
+  }
+
+  if (validation.isUnique || validation.returnsSingleElement) {
+    return "unique";
+  }
+
+  const count = Number(validation.matchCount);
+
+  if (count === 0) {
+    return "zero";
+  }
+
+  return "multi";
+}
+
+function selectorValidationDetail(validation) {
+  if (!validation) {
+    return "Validacao: nao testado nesta captura.";
+  }
+
+  if (!validation.tested) {
+    return `Validacao: falhou com ${validation.method || "metodo desconhecido"}${validation.error ? ` - ${validation.error}` : ""}.`;
+  }
+
+  const count = Number(validation.matchCount);
+  const targetText = validation.containsCapturedElement ? "inclui o elemento capturado" : "nao confirmou o elemento capturado";
+  const context = validation.context ? ` no contexto ${validation.context}` : "";
+  const uniqueness = validation.isUnique || validation.returnsSingleElement ? "retorna um unico elemento" : "nao retorna um unico elemento";
+
+  return `Validacao: ${validation.method || "querySelectorAll"} encontrou ${Number.isFinite(count) ? count : "?"} match(es)${context}; ${uniqueness}; ${targetText}.`;
 }
 
 function renderPuppeteerCode(suggestions) {
@@ -813,6 +893,7 @@ function buildAgentSummaryCompact(capture) {
         selector: item.selector || "",
         type: item.type || "",
         stability: item.stability || "",
+        validation: compactSelectorValidation(item.validation),
         warning: item.warning || ""
       }))
     },
@@ -1069,9 +1150,25 @@ function compactSelectorRecommendation(item) {
     type: item.type || "",
     score: item.score ?? null,
     stability: item.stability || "",
+    validation: compactSelectorValidation(item.validation),
     reason: item.reason || "",
     warning: item.warning || ""
   };
+}
+
+function compactSelectorValidation(validation) {
+  if (!validation) {
+    return null;
+  }
+
+  return pruneEmpty({
+    tested: Boolean(validation.tested),
+    method: validation.method || "",
+    matchCount: validation.matchCount ?? null,
+    isUnique: Boolean(validation.isUnique || validation.returnsSingleElement),
+    containsCapturedElement: Boolean(validation.containsCapturedElement),
+    error: validation.error || ""
+  });
 }
 
 function simplifyIframePath(path) {
@@ -1147,24 +1244,172 @@ function buildConsoleSuggestions(capture) {
   return {
     querySelector: cssSelector
       ? [
-          `const element = document.querySelector(${cssLiteral});`,
-          "console.log(element);"
+          "(() => {",
+          `  const element = document.querySelector(${cssLiteral});`,
+          "  console.log(element);",
+          "  return element;",
+          "})();"
         ].join("\n")
       : "",
     querySelectorAll: cssSelector
       ? [
-          `const elements = Array.from(document.querySelectorAll(${cssLiteral}));`,
-          "console.log(elements.length, elements);"
+          "(() => {",
+          `  const elements = Array.from(document.querySelectorAll(${cssLiteral}));`,
+          "  console.log(elements.length, elements);",
+          "  return elements;",
+          "})();"
         ].join("\n")
       : "",
     xpath: xpathSelector
       ? [
-          `const xpath = ${xpathLiteral};`,
-          "const element = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;",
-          "console.log(element);"
+          "(() => {",
+          `  const xpath = ${xpathLiteral};`,
+          "  const element = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;",
+          "  console.log(element);",
+          "  return element;",
+          "})();"
         ].join("\n")
       : ""
   };
+}
+
+function buildSelectorConsoleTestCode(capture, item) {
+  const selector = item?.selector || "";
+  const isXPath = isXPathSelectorForConsole(selector, item);
+
+  if (capture?.iframeInfo?.isInsideIframe) {
+    return buildIframeSelectorConsoleTestCode(capture.iframeInfo, selector, isXPath);
+  }
+
+  return buildDocumentSelectorConsoleTestCode(selector, isXPath);
+}
+
+function buildDocumentSelectorConsoleTestCode(selector, isXPath) {
+  if (!selector) {
+    return "";
+  }
+
+  if (isXPath) {
+    const xpathLiteral = JSON.stringify(normalizeXPathSelector(selector));
+
+    return [
+      "(() => {",
+      `  const xpath = ${xpathLiteral};`,
+      "  const snapshot = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);",
+      "  const elements = Array.from({ length: snapshot.snapshotLength }, (_, index) => snapshot.snapshotItem(index));",
+      "  console.log('matches:', elements.length, elements);",
+      "  elements[0]?.scrollIntoView({ block: 'center', inline: 'center' });",
+      "  return elements;",
+      "})();"
+    ].join("\n");
+  }
+
+  const selectorLiteral = JSON.stringify(selector);
+
+  return [
+    "(() => {",
+    `  const selector = ${selectorLiteral};`,
+    "  const elements = Array.from(document.querySelectorAll(selector));",
+    "  console.log('matches:', elements.length, elements);",
+    "  elements[0]?.scrollIntoView({ block: 'center', inline: 'center' });",
+    "  return elements;",
+    "})();"
+  ].join("\n");
+}
+
+function buildIframeSelectorConsoleTestCode(iframeInfo, selector, isXPath) {
+  if (!selector) {
+    return "";
+  }
+
+  const framePath = buildConsoleFramePath(iframeInfo?.iframePath || []);
+
+  if (!framePath.length) {
+    return [
+      "// O elemento foi capturado dentro de iframe, mas o caminho do iframe nao ficou disponivel.",
+      "// Selecione manualmente o contexto do iframe no DevTools ou preencha framePath antes de executar.",
+      buildDocumentSelectorConsoleTestCode(selector, isXPath)
+    ].join("\n");
+  }
+
+  const framePathLiteral = JSON.stringify(framePath, null, 2);
+  const selectorLiteral = JSON.stringify(selector);
+  const normalizedSelectorLiteral = JSON.stringify(isXPath ? normalizeXPathSelector(selector) : selector);
+  const finalLookup = isXPath
+    ? [
+        `    const xpath = ${normalizedSelectorLiteral};`,
+        "    const snapshot = frameDocument.evaluate(xpath, frameDocument, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);",
+        "    const elements = Array.from({ length: snapshot.snapshotLength }, (_, index) => snapshot.snapshotItem(index));"
+      ]
+    : [
+        `    const selector = ${selectorLiteral};`,
+        "    const elements = Array.from(frameDocument.querySelectorAll(selector));"
+      ];
+
+  return [
+    "(() => {",
+    `  const framePath = ${framePathLiteral};`,
+    "",
+    "  function safeQueryFrame(doc, selector) {",
+    "    if (!selector) return null;",
+    "    try {",
+    "      return doc.querySelector(selector);",
+    "    } catch (error) {",
+    "      return null;",
+    "    }",
+    "  }",
+    "",
+    "  function findFrameElement(doc, frame) {",
+    "    const frames = Array.from(doc.querySelectorAll('iframe, frame'));",
+    "    return safeQueryFrame(doc, frame.selector) ||",
+    "      safeQueryFrame(doc, frame.frameCssPath) ||",
+    "      frames.find((node) => frame.id && node.id === frame.id) ||",
+    "      frames.find((node) => frame.name && node.name === frame.name) ||",
+    "      frames.find((node) => frame.title && node.title === frame.title) ||",
+    "      frames.find((node) => frame.srcPart && node.src && node.src.includes(frame.srcPart)) ||",
+    "      frames[frame.frameIndex] ||",
+    "      null;",
+    "  }",
+    "",
+    "  let frameDocument = document;",
+    "",
+    "  try {",
+    "    for (const frame of framePath) {",
+    "      const frameElement = findFrameElement(frameDocument, frame);",
+    "      if (!frameElement) throw new Error('Iframe nao encontrado: ' + JSON.stringify(frame));",
+    "      frameDocument = frameElement.contentDocument || frameElement.contentWindow?.document;",
+    "      if (!frameDocument) throw new Error('Iframe inacessivel ou cross-origin: ' + JSON.stringify(frame));",
+    "    }",
+    ...finalLookup,
+    "    console.log('matches:', elements.length, elements);",
+    "    elements[0]?.scrollIntoView({ block: 'center', inline: 'center' });",
+    "    return elements;",
+    "  } catch (error) {",
+    "    console.error('Falha ao testar o seletor dentro do iframe.', error);",
+    "    return null;",
+    "  }",
+    "})();"
+  ].join("\n");
+}
+
+function buildConsoleFramePath(path) {
+  return (path || []).map((frame) => ({
+    frameIndex: Number.isInteger(frame.frameIndex) ? frame.frameIndex : null,
+    id: frame.frameId || "",
+    name: frame.frameName || "",
+    title: frame.frameTitle || "",
+    srcPart: String(frame.frameSrc || "").slice(0, 160),
+    selector: frame.frameSelector || "",
+    frameCssPath: frame.frameCssPath || ""
+  }));
+}
+
+function isXPathSelectorForConsole(selector, item = {}) {
+  const text = String(selector || "").trim();
+  return item.type === "xpath" ||
+    text.startsWith("/") ||
+    text.startsWith("(") ||
+    text.startsWith("::-p-xpath(");
 }
 
 function normalizeXPathSelector(selector) {
@@ -1184,6 +1429,7 @@ function formatRecommendedSelectors(items) {
       `type: ${item.type}`,
       `score: ${item.score}`,
       `stability: ${item.stability}`,
+      `validation: ${selectorValidationDetail(item.validation)}`,
       `reason: ${item.reason}`,
       item.warning ? `warning: ${item.warning}` : ""
     ].filter(Boolean).join("\n"))

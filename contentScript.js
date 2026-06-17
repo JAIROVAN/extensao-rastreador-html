@@ -271,7 +271,10 @@
     const idAnalysis = analyzeId(element.getAttribute("id") || "");
     const labelInfo = collectLabelInfo(element);
     const selectors = buildSelectors(element, idAnalysis, labelInfo);
-    const recommendedSelectors = buildRecommendedSelectors(element, idAnalysis, labelInfo, selectors);
+    const recommendedSelectors = validateRecommendedSelectors(
+      buildRecommendedSelectors(element, idAnalysis, labelInfo, selectors),
+      element
+    );
     const iframeInfo = collectIframeInfo();
     const puppeteerSuggestions = buildPuppeteerSuggestions(element, recommendedSelectors, selectors, iframeInfo);
 
@@ -594,6 +597,105 @@
     }
 
     return items.sort((a, b) => b.score - a.score);
+  }
+
+  function validateRecommendedSelectors(items, targetElement) {
+    return items.map((item) => ({
+      ...item,
+      validation: validateSelectorInCurrentContext(item.selector, targetElement)
+    }));
+  }
+
+  function validateSelectorInCurrentContext(selector, targetElement) {
+    const text = String(selector || "");
+    const method = isXPath(text) ? "xpath" : "querySelectorAll";
+    const searchRoot = getSelectorSearchRoot(targetElement);
+
+    if (!text) {
+      return {
+        tested: false,
+        method,
+        matchCount: null,
+        isUnique: false,
+        returnsSingleElement: false,
+        containsCapturedElement: false,
+        context: searchRoot.context,
+        error: "Seletor vazio."
+      };
+    }
+
+    try {
+      if (method === "xpath") {
+        const xpath = normalizeSelectorXPath(text);
+        const snapshot = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        let containsCapturedElement = false;
+
+        for (let index = 0; index < snapshot.snapshotLength; index += 1) {
+          if (snapshot.snapshotItem(index) === targetElement) {
+            containsCapturedElement = true;
+            break;
+          }
+        }
+
+        return {
+          tested: true,
+          method: "xpath",
+          matchCount: snapshot.snapshotLength,
+          isUnique: snapshot.snapshotLength === 1,
+          returnsSingleElement: snapshot.snapshotLength === 1,
+          containsCapturedElement,
+          context: "document",
+          error: ""
+        };
+      }
+
+      const matches = Array.from(searchRoot.root.querySelectorAll(text));
+      const containsCapturedElement = matches.includes(targetElement);
+
+      return {
+        tested: true,
+        method: "querySelectorAll",
+        matchCount: matches.length,
+        isUnique: matches.length === 1,
+        returnsSingleElement: matches.length === 1,
+        containsCapturedElement,
+        context: searchRoot.context,
+        error: ""
+      };
+    } catch (error) {
+      return {
+        tested: false,
+        method,
+        matchCount: null,
+        isUnique: false,
+        returnsSingleElement: false,
+        containsCapturedElement: false,
+        context: searchRoot.context,
+        error: error?.message || String(error)
+      };
+    }
+  }
+
+  function getSelectorSearchRoot(element) {
+    const root = element?.getRootNode?.();
+
+    if (typeof ShadowRoot !== "undefined" && root instanceof ShadowRoot) {
+      return {
+        root,
+        context: "shadowRoot"
+      };
+    }
+
+    return {
+      root: document,
+      context: "document"
+    };
+  }
+
+  function normalizeSelectorXPath(selector) {
+    const text = String(selector || "");
+    const match = text.match(/^::-p-xpath\((.*)\)$/);
+    return match ? match[1] : text;
   }
 
   function collectLabelInfo(element) {
